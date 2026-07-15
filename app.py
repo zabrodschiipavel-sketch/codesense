@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 import deepseek
 import languages
+import quiz
 import srs
 import storage
 
@@ -38,7 +39,8 @@ class AnswerRequest(BaseModel):
 
 
 class ReviewRequest(BaseModel):
-    rating: str
+    correct: bool
+    seconds: float = Field(default=0, ge=0)
 
 
 class DeckRequest(BaseModel):
@@ -197,20 +199,31 @@ async def cards_due(language: str | None = None):
         cards = [c for c in cards if c["language"] == language]
     # Сначала те, что уже учатся: новые не должны вытеснять просроченные повторы.
     cards.sort(key=lambda c: (c["reps"] == 0, c["due"]))
+
+    pool = list(storage.load_cards().values())
+    out, skipped = [], 0
+    for c in cards:
+        built = quiz.build_options(c, pool)
+        if not built:
+            # Дистракторов не набралось (карточка одна на весь банк) — выбирать не из чего.
+            skipped += 1
+            continue
+        options, correct_index = built
+        out.append({
+            "id": c["id"],
+            "language": c["language"],
+            "kind": c["kind"],
+            "front": c["front"],
+            "back": c["back"],
+            "reps": c["reps"],
+            "options": options,
+            "correct_index": correct_index,
+        })
+
     return {
         "language": language,
-        "cards": [
-            {
-                "id": c["id"],
-                "language": c["language"],
-                "kind": c["kind"],
-                "front": c["front"],
-                "back": c["back"],
-                "reps": c["reps"],
-                "intervals": srs.preview_intervals(c),
-            }
-            for c in cards
-        ],
+        "cards": out,
+        "skipped": skipped,
         "stats": storage.card_stats(),
     }
 
@@ -220,17 +233,16 @@ async def review_card(card_id: str, req: ReviewRequest):
     card = storage.get_card(card_id)
     if not card:
         raise HTTPException(status_code=404, detail="Карточка не найдена")
-    try:
-        state = srs.apply_review(card, req.rating)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    rating = srs.rating_for_answer(req.correct, req.seconds)
+    state = srs.apply_review(card, rating)
     updated = storage.update_card(card_id, state)
     return {
         "id": card_id,
+        "rating": rating,
         "interval": updated["interval"],
         "due": updated["due"],
         "ease": updated["ease"],
-        "again": req.rating == "again",  # карточка вернётся в конец очереди этой сессии
+        "again": rating == "again",  # карточка вернётся в конец очереди этой сессии
         "stats": storage.card_stats(),
     }
 

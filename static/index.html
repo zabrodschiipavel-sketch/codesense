@@ -128,23 +128,34 @@
   #card-front.construct { font-family: var(--mono); font-size: 30px; color: var(--accent); word-break: break-word; }
   #card-front.snippet { padding: 18px; text-align: left; }
   #card-front.snippet pre { padding: 0; }
-  #card-back { padding: 20px 24px; border-top: 1px solid var(--border); font-size: 15px; line-height: 1.6; }
 
-  .rate-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
-  .rate {
+  .opts { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .opt {
+    display: flex; gap: 11px; align-items: flex-start; text-align: left; width: 100%;
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-    padding: 10px 6px; cursor: pointer; font-family: inherit; color: var(--text);
-    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 12px 14px; cursor: pointer; font-family: inherit; font-size: 14px;
+    color: var(--text); line-height: 1.5;
   }
-  .rate:hover { border-color: currentColor; }
-  .rate b { font-size: 14px; }
-  .rate span { font-size: 11px; color: var(--muted); }
-  .rate kbd {
-    font-size: 10px; color: var(--muted); border: 1px solid var(--border);
-    border-radius: 3px; padding: 0 4px; margin-top: 2px;
+  .opt:hover:not(:disabled) { border-color: var(--accent); }
+  .opt:disabled { cursor: default; opacity: .55; }
+  .opt kbd {
+    flex-shrink: 0; font-size: 11px; color: var(--muted); border: 1px solid var(--border);
+    border-radius: 4px; padding: 1px 6px; margin-top: 1px;
   }
-  .rate.again { color: var(--bad); } .rate.hard { color: var(--mid); }
-  .rate.good { color: var(--good); } .rate.easy { color: var(--accent); }
+  /* Разобранная карточка: правильный вариант всегда подсвечивается, даже если ты в него попал */
+  .opt.right { border-color: var(--good); background: #0d2417; opacity: 1; }
+  .opt.right kbd { color: var(--good); border-color: #1f5c33; }
+  .opt.wrong { border-color: var(--bad); background: #2b1616; opacity: 1; }
+  .opt.wrong kbd { color: var(--bad); border-color: #5c2b2b; }
+
+  .verdict-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-top: 12px; padding: 10px 12px 10px 16px; border-radius: 10px;
+    border: 1px solid var(--border); font-size: 14px;
+  }
+  .verdict-bar.ok { border-color: #1f5c33; background: #0d2417; }
+  .verdict-bar.bad { border-color: #5c2b2b; background: #2b1616; }
+  .verdict-bar kbd { font-size: 10px; opacity: .6; border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; }
 
   .muted-center { text-align: center; color: var(--muted); padding: 60px 20px; }
   .err { border-color: #5c2b2b; background: #2b1616; padding: 14px 16px; border-radius: 10px; border: 1px solid #5c2b2b; color: #ffb4b0; font-size: 14px; margin-bottom: 16px; }
@@ -257,7 +268,6 @@
           <span class="badge hidden" id="card-new">новая</span>
         </div>
         <div id="card-front"></div>
-        <div id="card-back" class="hidden"></div>
       </div>
       <div id="card-actions"></div>
     </div>
@@ -560,15 +570,10 @@ let mode = "train";
 let filterLang = ""; // "" — повторять все языки вперемешку
 let queue = [];
 let card = null;
-let flipped = false;
 let sessionTotal = 0, sessionDone = 0;
 
-const RATE_BTNS = [
-  { r: "again", label: "Забыл", key: "1" },
-  { r: "hard", label: "Трудно", key: "2" },
-  { r: "good", label: "Хорошо", key: "3" },
-  { r: "easy", label: "Легко", key: "4" },
-];
+let cardAnswered = false;
+let cardShownAt = 0;
 
 function setMode(m) {
   mode = m;
@@ -614,7 +619,7 @@ function fillFilter(s) {
 
 function nextCard() {
   card = queue.shift() || null;
-  flipped = false;
+  cardAnswered = false;
   if (!card) {
     $("card-area").classList.add("hidden");
     $("card-empty").classList.remove("hidden");
@@ -644,53 +649,67 @@ function renderCard() {
   front.className = card.kind;
   if (card.kind === "snippet") {
     front.innerHTML = "<pre><code></code></pre>";
-    const code = front.querySelector("code");
-    code.textContent = card.front;
-    highlightInto(code, card.front, card.language);
+    highlightInto(front.querySelector("code"), card.front, card.language);
   } else {
     front.textContent = card.front;
   }
 
-  $("card-back").classList.add("hidden");
-  $("card-back").textContent = card.back;
-  $("card-actions").innerHTML =
-    `<button class="primary" id="btn-flip" style="width:100%;padding:12px">Показать ответ <kbd style="opacity:.6">пробел</kbd></button>`;
-  $("btn-flip").onclick = flip;
-  $("card-progress").textContent =
-    `${sessionDone} из ${sessionTotal} · осталось ${queue.length + 1}`;
-}
-
-function flip() {
-  if (flipped) return;
-  flipped = true;
-  $("card-back").classList.remove("hidden");
-  $("card-actions").innerHTML =
-    `<div class="rate-row">${RATE_BTNS.map(b => `
-      <button class="rate ${b.r}" data-r="${b.r}">
-        <b>${b.label}</b><span>${card.intervals[b.r]}</span><kbd>${b.key}</kbd>
-      </button>`).join("")}</div>`;
-  $("card-actions").querySelectorAll(".rate").forEach(el => {
-    el.onclick = () => rate(el.dataset.r);
+  cardAnswered = false;
+  $("card-actions").innerHTML = `<div class="opts">${card.options.map((o, i) =>
+    `<button class="opt" data-i="${i}"><kbd>${i + 1}</kbd><span>${escapeHtml(o)}</span></button>`
+  ).join("")}</div>`;
+  $("card-actions").querySelectorAll(".opt").forEach(el => {
+    el.onclick = () => answerCard(Number(el.dataset.i));
   });
+  updateProgress();
+  // Таймер запускается последним: он меряет время на размышление, а не на отрисовку.
+  cardShownAt = performance.now();
 }
 
-async function rate(rating) {
-  if (!card || !flipped) return;
+function updateProgress() {
+  // +1 — текущая карточка: она уже вынута из очереди, но сессию ещё не покинула.
+  const left = queue.length + (card ? 1 : 0) - (cardAnswered ? 1 : 0);
+  $("card-progress").textContent = `${sessionDone} из ${sessionTotal} · осталось ${Math.max(0, left)}`;
+}
+
+async function answerCard(index) {
+  if (cardAnswered || !card) return;
+  cardAnswered = true;
+  const seconds = (performance.now() - cardShownAt) / 1000;
+  const correct = index === card.correct_index;
   const current = card;
-  card = null; // защита от двойного нажатия, пока летит запрос
+
+  $("card-actions").querySelectorAll(".opt").forEach((el, i) => {
+    el.disabled = true;
+    if (i === current.correct_index) el.classList.add("right");
+    else if (i === index) el.classList.add("wrong");
+  });
+
   try {
-    const r = await api(`/api/cards/${current.id}/review`, { rating });
-    if (r.again) {
-      queue.push(current); // забыл — вернётся в конце этой же сессии
-    } else {
-      sessionDone++;
-    }
+    const r = await api(`/api/cards/${current.id}/review`, { correct, seconds });
+    if (r.again) queue.push(current); // мимо — вернётся в конце этой же сессии
+    else sessionDone++;
     applyCardStats(r.stats);
-    nextCard();
+    updateProgress();
+    showVerdict(correct, r);
   } catch (e) {
-    card = current;
+    cardAnswered = false;
     showError(e.message);
   }
+}
+
+function showVerdict(correct, r) {
+  const when = r.interval === 0
+    ? "вернётся в конце сессии"
+    : `следующий показ через ${r.interval} ${plural(r.interval, "день", "дня", "дней")}`;
+  const head = correct ? (r.rating === "easy" ? "Верно, и быстро" : "Верно") : "Мимо";
+  const bar = document.createElement("div");
+  bar.className = "verdict-bar " + (correct ? "ok" : "bad");
+  bar.innerHTML = `<span><b>${head}</b> · ${when}</span>
+    <button class="primary" id="btn-next">Дальше <kbd>⏎</kbd></button>`;
+  $("card-actions").appendChild(bar);
+  $("btn-next").onclick = nextCard;
+  $("btn-next").focus();
 }
 
 function applyCardStats(s) {
@@ -751,12 +770,13 @@ $("filter-lang").onchange = () => {
 
 document.addEventListener("keydown", e => {
   if (mode !== "cards" || !card) return;
-  if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") return;
-  if ((e.code === "Space" || e.key === " ") && !flipped) { e.preventDefault(); flip(); return; }
-  if (flipped) {
-    const b = RATE_BTNS.find(x => x.key === e.key);
-    if (b) { e.preventDefault(); rate(b.r); }
+  if (["TEXTAREA", "INPUT", "SELECT"].includes(e.target.tagName)) return;
+  if (!cardAnswered) {
+    const n = Number(e.key);
+    if (n >= 1 && n <= card.options.length) { e.preventDefault(); answerCard(n - 1); }
+    return;
   }
+  if (e.key === "Enter" || e.code === "Space" || e.key === " ") { e.preventDefault(); nextCard(); }
 });
 
 $("diff-seg").onclick = e => {

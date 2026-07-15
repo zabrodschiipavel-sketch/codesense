@@ -108,3 +108,20 @@ def _humanize(days: int) -> str:
 
 def is_due(card: dict, at: datetime | None = None) -> bool:
     return datetime.fromisoformat(card["due"]) <= (at or now())
+
+
+# Выбор из вариантов даёт только «попал / не попал». Если сводить это к again/good, лёгкость
+# перестаёт двигаться вообще (у good дельта нулевая) и SM-2 вырождается в Лейтнера. Поэтому
+# вторым сигналом берём время на ответ: скорость узнавания — доступный здесь прокси беглости.
+FAST_SECONDS = 6
+SLOW_SECONDS = 20
+
+
+def rating_for_answer(correct: bool, seconds: float) -> str:
+    if not correct:
+        return "again"
+    if seconds <= FAST_SECONDS:
+        return "easy"
+    if seconds <= SLOW_SECONDS:
+        return "good"
+    return "hard"
