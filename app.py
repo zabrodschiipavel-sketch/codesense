@@ -189,12 +189,16 @@ async def submit_answer(snippet_id: str, req: AnswerRequest):
 
 
 @app.get("/api/cards/due")
-async def cards_due():
-    """Вся очередь на сегодня разом: карточки лёгкие, а листать их надо без задержек."""
+async def cards_due(language: str | None = None):
+    """Вся очередь на сегодня разом: карточки лёгкие, а листать их надо без задержек.
+    language — фильтр «повторять только этот язык»; без него идут все языки вперемешку."""
     cards = [c for c in storage.load_cards().values() if srs.is_due(c)]
+    if language:
+        cards = [c for c in cards if c["language"] == language]
     # Сначала те, что уже учатся: новые не должны вытеснять просроченные повторы.
     cards.sort(key=lambda c: (c["reps"] == 0, c["due"]))
     return {
+        "language": language,
         "cards": [
             {
                 "id": c["id"],

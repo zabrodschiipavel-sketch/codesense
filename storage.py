@@ -159,9 +159,15 @@ def update_card(card_id: str, state: dict) -> dict:
 def card_stats() -> dict:
     cards = list(load_cards().values())
     due = [c for c in cards if srs.is_due(c)]
-    by_language: dict[str, int] = {}
+
+    # Счётчик due по языкам нужен фильтру: он показывает, куда вообще есть смысл переключаться.
+    by_language: dict[str, dict] = {}
     for c in cards:
-        by_language[c["language"]] = by_language.get(c["language"], 0) + 1
+        entry = by_language.setdefault(c["language"], {"cards": 0, "due": 0})
+        entry["cards"] += 1
+        if srs.is_due(c):
+            entry["due"] += 1
+
     return {
         "total": len(cards),
         "due": len(due),
@@ -169,8 +175,11 @@ def card_stats() -> dict:
         "learned": len([c for c in cards if c["reps"] >= 2]),
         "languages": len(by_language),
         "by_language": sorted(
-            ({"language": k, "cards": v} for k, v in by_language.items()),
-            key=lambda x: (-x["cards"], x["language"]),
+            (
+                {"language": k, "cards": v["cards"], "due": v["due"]}
+                for k, v in by_language.items()
+            ),
+            key=lambda x: (-x["due"], -x["cards"], x["language"]),
         ),
     }
 

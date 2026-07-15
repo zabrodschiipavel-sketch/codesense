@@ -116,6 +116,7 @@
   .insight b { color: var(--accent); }
 
   .pill { background: var(--accent); color: #06121f; border-radius: 10px; padding: 0 6px; font-size: 11px; margin-left: 5px; }
+  .ctl-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
   .sel {
     background: var(--panel); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 8px 10px; font-family: inherit; font-size: 13px;
@@ -232,15 +233,18 @@
 
   <div id="cards-view" class="hidden">
     <div class="controls">
+      <span class="ctl-label">Повторять</span>
+      <select id="filter-lang" class="sel"></select>
+      <span class="hint-note" id="card-progress"></span>
+      <div class="spacer"></div>
+      <span class="ctl-label">Пополнить</span>
       <select id="deck-lang" class="sel"></select>
       <select id="deck-count" class="sel">
         <option value="10">10 карточек</option>
         <option value="20" selected>20 карточек</option>
         <option value="30">30 карточек</option>
       </select>
-      <button class="ghost" id="btn-deck">Собрать колоду</button>
-      <div class="spacer"></div>
-      <span class="hint-note" id="card-progress"></span>
+      <button class="ghost" id="btn-deck">Собрать</button>
     </div>
 
     <div id="card-empty" class="muted-center"></div>
@@ -553,6 +557,7 @@ async function showStats() {
 
 // ---------- Карточки ----------
 let mode = "train";
+let filterLang = ""; // "" — повторять все языки вперемешку
 let queue = [];
 let card = null;
 let flipped = false;
@@ -576,13 +581,35 @@ function setMode(m) {
 
 async function loadCards() {
   try {
-    const d = await api("/api/cards/due");
+    const q = filterLang ? `?language=${encodeURIComponent(filterLang)}` : "";
+    const d = await api("/api/cards/due" + q);
     queue = d.cards;
     sessionTotal = queue.length;
     sessionDone = 0;
     applyCardStats(d.stats);
+    fillFilter(d.stats);
     nextCard();
   } catch (e) { showError(e.message); }
+}
+
+// Пересобирается только при заходе в раздел, смене фильтра и пополнении колоды.
+// Дёргать её на каждой оценке нельзя: список моргал бы прямо под курсором.
+function fillFilter(s) {
+  const sel = $("filter-lang");
+  const opts = [`<option value="">Все языки (${s.due})</option>`];
+  for (const l of s.by_language) {
+    opts.push(
+      `<option value="${escapeHtml(l.language)}">${escapeHtml(l.language)} — ${l.due} из ${l.cards}</option>`
+    );
+  }
+  // Фильтр может указывать на язык, которого в списке нет. Тогда его нужно оставить видимым:
+  // молча схлопнуть select на «все языки» нельзя — очередь-то останется отфильтрованной,
+  // и человек увидит «нечего повторять» при полном долге по другим языкам.
+  if (filterLang && !s.by_language.some(l => l.language === filterLang)) {
+    opts.push(`<option value="${escapeHtml(filterLang)}">${escapeHtml(filterLang)} — 0</option>`);
+  }
+  sel.innerHTML = opts.join("");
+  sel.value = filterLang;
 }
 
 function nextCard() {
@@ -592,11 +619,14 @@ function nextCard() {
     $("card-area").classList.add("hidden");
     $("card-empty").classList.remove("hidden");
     $("card-empty").innerHTML = sessionTotal
-      ? `Всё повторено — <b>${sessionDone}</b> ${plural(sessionDone, "карточка", "карточки", "карточек")} за сессию.<br>
+      ? `Всё повторено — <b>${sessionDone}</b> ${plural(sessionDone, "карточка", "карточки", "карточек")} за сессию${filterLang ? ` по ${escapeHtml(filterLang)}` : ""}.<br>
          Возвращайся, когда подойдёт срок следующих.`
+      : filterLang
+      ? `По ${escapeHtml(filterLang)} на сегодня нечего повторять.<br>
+         Переключись на «Все языки» или пополни колоду по этому языку.`
       : `Пока нечего повторять.<br>
          Карточки заводятся сами после каждого раунда — из того, что ты упустил.<br>
-         Или собери колоду по языку кнопкой выше.`;
+         Или собери колоду по языку справа.`;
     $("card-progress").textContent = "";
     return;
   }
@@ -686,6 +716,8 @@ async function makeDeck() {
   try {
     const r = await api("/api/cards/deck", { language, count });
     applyCardStats(r.stats);
+    // Иначе новые карточки утонут за фильтром другого языка, и кнопка покажется сломанной.
+    if (r.added) filterLang = language;
     await loadCards();
     if (!r.added) showError(`Все карточки по ${language} уже были — новых не добавилось.`);
   } catch (e) {
@@ -712,6 +744,10 @@ $("mode-seg").onclick = e => {
   setMode(btn.dataset.m);
 };
 $("btn-deck").onclick = makeDeck;
+$("filter-lang").onchange = () => {
+  filterLang = $("filter-lang").value;
+  loadCards();
+};
 
 document.addEventListener("keydown", e => {
   if (mode !== "cards" || !card) return;
