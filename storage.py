@@ -21,6 +21,7 @@ RANKS = [
 ]
 
 RECENT_LANGUAGES_WINDOW = 8
+RECENT_THEMES_WINDOW = 12
 
 
 def now_iso() -> str:
@@ -83,14 +84,12 @@ def recent_languages() -> list[str]:
     return [r["language"] for r in rounds[-RECENT_LANGUAGES_WINDOW:]]
 
 
-def recent_topics(language: str) -> list[str]:
-    """Темы, уже выпадавшие на этом языке, — чтобы не генерировать то же самое."""
-    topics = []
-    snippets = load_snippets()
-    for snippet in snippets.values():
-        if snippet["language"] == language and snippet.get("topic"):
-            topics.append(snippet["topic"])
-    return topics[-6:]
+def recent_themes() -> list[str]:
+    """Недавно выпадавшие темы — по всем языкам, а не по одному: модель липнет к
+    подсчёту слов на любом языке, так что отсекать повторы надо глобально."""
+    snippets = sorted(load_snippets().values(), key=lambda s: s.get("created_at", ""))
+    themes = [s["theme"] for s in snippets if s.get("theme")]
+    return themes[-RECENT_THEMES_WINDOW:]
 
 
 def record_round(round_data: dict) -> dict:

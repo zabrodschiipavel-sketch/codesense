@@ -45,18 +45,20 @@ async def index():
 async def new_round(req: NewRound):
     difficulty = languages.pick_difficulty(req.difficulty)
     language = languages.pick_language(difficulty, exclude=storage.recent_languages())
+    theme = languages.pick_theme(exclude=storage.recent_themes())
 
     try:
         generated = await deepseek.generate_snippet(
             language=language,
             difficulty=difficulty,
             brief=languages.DIFFICULTY_BRIEF[difficulty],
-            avoid=storage.recent_topics(language),
+            theme=theme,
         )
         snippet = {
             "id": uuid.uuid4().hex[:12],
             "language": language,
             "difficulty": difficulty,
+            "theme": theme,
             "created_at": storage.now_iso(),
             **generated,
         }

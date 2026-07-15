@@ -7,8 +7,17 @@ import re
 import httpx
 
 API_URL = "https://api.deepseek.com/chat/completions"
-MODEL_GENERATE = os.getenv("CODESENSE_MODEL_GENERATE", "deepseek-v4-flash")
-MODEL_GRADE = os.getenv("CODESENSE_MODEL_GRADE", "deepseek-v4-pro")
+MODEL = os.getenv("CODESENSE_MODEL", "deepseek-v4-flash")
+
+# flash размышляет по умолчанию; reasoning_effort принимает low|medium|high|max|xhigh,
+# "off" отключает размышления совсем (thinking.type=disabled).
+# Замерено на этом промпте: генерация с размышлениями 30-70 с, без них 6-9 с при том же
+# качестве кода — писать идиоматичный фрагмент модель и так умеет, думать тут не над чем.
+# Оценка свободного текста против кода — наоборот, самое трудное здесь, ей нужен high.
+REASONING_GENERATE = os.getenv("CODESENSE_REASONING_GENERATE", "off")
+REASONING_GRADE = os.getenv("CODESENSE_REASONING_GRADE", "high")
+REASONING_OFF = "off"
+
 TIMEOUT = 180.0
 
 
@@ -45,9 +54,9 @@ def _extract_json(text: str) -> dict:
     raise DeepSeekError("В ответе модели нет JSON-объекта")
 
 
-async def _chat(model: str, system: str, user: str, temperature: float) -> dict:
+async def _chat(system: str, user: str, temperature: float, reasoning: str) -> dict:
     payload = {
-        "model": model,
+        "model": MODEL,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -55,6 +64,10 @@ async def _chat(model: str, system: str, user: str, temperature: float) -> dict:
         "temperature": temperature,
         "response_format": {"type": "json_object"},
     }
+    if reasoning == REASONING_OFF:
+        payload["thinking"] = {"type": "disabled"}
+    else:
+        payload["reasoning_effort"] = reasoning
     headers = {"Authorization": f"Bearer {_api_key()}"}
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(API_URL, json=payload, headers=headers)
@@ -76,19 +89,16 @@ GENERATE_SYSTEM = (
 )
 
 
-def _generate_prompt(language: str, difficulty: str, brief: str, avoid: list[str]) -> str:
-    avoid_line = ""
-    if avoid:
-        avoid_line = (
-            "\nЭти темы уже недавно попадались, возьми другую: "
-            + ", ".join(avoid)
-            + "."
-        )
+def _generate_prompt(language: str, difficulty: str, brief: str, theme: str) -> str:
     return f"""Составь упражнение на понимание кода.
 
 Язык: {language}
 Уровень: {difficulty}
-Каким должен быть фрагмент: {brief}{avoid_line}
+Тема: {theme}
+Каким должен быть фрагмент: {brief}
+
+Тема задана жёстко — не подменяй её. Если она плохо ложится на {language}, возьми ближайшую
+осмысленную для этого языка трактовку темы, но не переключайся на другую задачу.
 
 Жёсткие требования к полю code:
 - Настоящий, синтаксически корректный {language}. Идиоматичный для {language}, а не C-подобная калька.
@@ -121,12 +131,12 @@ def _generate_prompt(language: str, difficulty: str, brief: str, avoid: list[str
 Подсказки и reference — на русском языке. Код — на {language}."""
 
 
-async def generate_snippet(language: str, difficulty: str, brief: str, avoid: list[str]) -> dict:
+async def generate_snippet(language: str, difficulty: str, brief: str, theme: str) -> dict:
     data = await _chat(
-        MODEL_GENERATE,
         GENERATE_SYSTEM,
-        _generate_prompt(language, difficulty, brief, avoid),
+        _generate_prompt(language, difficulty, brief, theme),
         temperature=1.0,
+        reasoning=REASONING_GENERATE,
     )
     code = (data.get("code") or "").strip()
     hints = data.get("hints") or []
@@ -197,10 +207,10 @@ def _grade_prompt(language: str, code: str, reference: str, answer: str) -> str:
 
 async def grade_answer(language: str, code: str, reference: str, answer: str) -> dict:
     data = await _chat(
-        MODEL_GRADE,
         GRADE_SYSTEM,
         _grade_prompt(language, code, reference, answer),
         temperature=0.2,
+        reasoning=REASONING_GRADE,
     )
     try:
         percent = int(round(float(data.get("percent", 0))))
