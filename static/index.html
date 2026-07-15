@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeSense — тренажёр насмотренности</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👁</text></svg>">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2129;
+    --border: #2a323d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --good: #3fb950;
+    --mid: #d29922;
+    --bad: #f85149;
+    --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 24px 20px 80px; }
+
+  header {
+    display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    padding: 16px 20px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; margin-bottom: 20px;
+  }
+  .logo { font-size: 20px; font-weight: 700; letter-spacing: -0.4px; }
+  .logo span { color: var(--accent); }
+  .rank-box { flex: 1; min-width: 220px; }
+  .rank-line { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+  .rank-line b { color: var(--text); font-size: 14px; }
+  .bar { height: 6px; background: var(--panel-2); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), #a371f7); width: 0; transition: width .5s; }
+  .metrics { display: flex; gap: 22px; }
+  .metric { text-align: center; }
+  .metric b { display: block; font-size: 19px; }
+  .metric span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+
+  .controls { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .seg { display: flex; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
+  .seg button {
+    background: none; border: 0; color: var(--muted); padding: 6px 14px;
+    border-radius: 6px; cursor: pointer; font-size: 13px; font-family: inherit;
+  }
+  .seg button.on { background: var(--panel-2); color: var(--text); }
+  .spacer { flex: 1; }
+
+  button.primary {
+    background: var(--accent); color: #06121f; border: 0; padding: 10px 20px;
+    border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px; font-family: inherit;
+  }
+  button.primary:disabled { opacity: .5; cursor: default; }
+  button.ghost {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    padding: 10px 18px; border-radius: 8px; cursor: pointer; font-size: 14px; font-family: inherit;
+  }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
+  .card-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .badge { font-size: 12px; padding: 3px 10px; border-radius: 20px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
+  .badge.lang { color: var(--accent); border-color: #1f4b7a; background: #0d2436; font-weight: 600; font-size: 13px; }
+  .badge.easy { color: var(--good); } .badge.medium { color: var(--mid); } .badge.hard { color: var(--bad); }
+  pre { margin: 0; padding: 18px; overflow-x: auto; font-family: var(--mono); font-size: 13.5px; line-height: 1.65; }
+  pre code { background: none !important; padding: 0 !important; }
+
+  .hints { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+  .hint {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; cursor: pointer; transition: border-color .2s;
+  }
+  .hint:hover:not(.open) { border-color: var(--accent); }
+  .hint.open { cursor: default; border-color: #3a4a5a; }
+  .hint.disabled { opacity: .45; cursor: default; }
+  .hint-top { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); }
+  .hint-title { font-weight: 600; color: var(--text); font-size: 13px; margin-top: 2px; }
+  .hint-body { font-size: 13px; color: var(--muted); margin-top: 8px; display: none; }
+  .hint.open .hint-body { display: block; }
+  .hint.open .hint-title { color: var(--muted); font-weight: 400; font-size: 12px; }
+
+  textarea {
+    width: 100%; min-height: 130px; resize: vertical; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px; padding: 14px;
+    color: var(--text); font-family: inherit; font-size: 14px; line-height: 1.6;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  .answer-bar { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+  .hint-note { font-size: 12px; color: var(--muted); }
+
+  .score-head { display: flex; align-items: center; gap: 18px; padding: 18px; border-bottom: 1px solid var(--border); }
+  .ring { position: relative; width: 84px; height: 84px; flex-shrink: 0; }
+  .ring svg { transform: rotate(-90deg); }
+  .ring-num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; }
+  .verdict { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .points-line { font-size: 13px; color: var(--muted); }
+  .points-line b { color: var(--good); font-size: 15px; }
+
+  .lists { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  .lists > div { padding: 16px 18px; }
+  .lists > div + div { border-left: 1px solid var(--border); }
+  .list-title { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 8px; }
+  .lists ul { margin: 0; padding-left: 18px; font-size: 13.5px; }
+  .lists li { margin-bottom: 5px; }
+  .ok-title { color: var(--good); } .miss-title { color: var(--bad); }
+  .reference { padding: 16px 18px; border-top: 1px solid var(--border); font-size: 14px; }
+  .insight { padding: 14px 18px; border-top: 1px solid var(--border); background: #0e1a26; font-size: 13.5px; }
+  .insight b { color: var(--accent); }
+
+  .muted-center { text-align: center; color: var(--muted); padding: 60px 20px; }
+  .err { border-color: #5c2b2b; background: #2b1616; padding: 14px 16px; border-radius: 10px; border: 1px solid #5c2b2b; color: #ffb4b0; font-size: 14px; margin-bottom: 16px; }
+  .hidden { display: none; }
+  .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid rgba(255,255,255,.25); border-top-color: currentColor; border-radius: 50%; animation: r .7s linear infinite; vertical-align: -2px; margin-right: 7px; }
+  @keyframes r { to { transform: rotate(360deg); } }
+
+  table.langs { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.langs td { padding: 5px 8px; border-bottom: 1px solid var(--border); }
+  table.langs td:last-child { text-align: right; color: var(--muted); }
+  @media (max-width: 720px) {
+    .hints, .lists { grid-template-columns: 1fr; }
+    .lists > div + div { border-left: 0; border-top: 1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo">Code<span>Sense</span></div>
+    <div class="rank-box">
+      <div class="rank-line"><b id="rank">—</b><span id="next-rank"></span></div>
+      <div class="bar"><i id="rank-bar"></i></div>
+    </div>
+    <div class="metrics">
+      <div class="metric"><b id="m-points">0</b><span>очки</span></div>
+      <div class="metric"><b id="m-avg">0%</b><span>средн. 10</span></div>
+      <div class="metric"><b id="m-streak">0</b><span>серия</span></div>
+      <div class="metric"><b id="m-langs">0</b><span>языков</span></div>
+    </div>
+  </header>
+
+  <div class="controls">
+    <div class="seg" id="diff-seg">
+      <button data-d="random" class="on">Случайно</button>
+      <button data-d="easy">Просто</button>
+      <button data-d="medium">Средне</button>
+      <button data-d="hard">Сложно</button>
+    </div>
+    <div class="spacer"></div>
+    <button class="ghost" id="btn-stats">Статистика</button>
+    <button class="primary" id="btn-new">Новый код</button>
+  </div>
+
+  <div id="error" class="err hidden"></div>
+
+  <div id="empty" class="muted-center">
+    Жми <b>«Новый код»</b> — получишь фрагмент на случайном языке.<br>
+    Опиши словами, что он делает. Подсказки открывать можно, но каждая срезает 10% от очков.
+  </div>
+
+  <div id="round" class="hidden">
+    <div class="card">
+      <div class="card-head">
+        <span class="badge lang" id="lang">—</span>
+        <span class="badge" id="diff">—</span>
+        <span class="badge hidden" id="cache-badge"></span>
+      </div>
+      <pre><code id="code"></code></pre>
+    </div>
+
+    <div class="hints" id="hints"></div>
+
+    <div id="answer-block">
+      <textarea id="answer" placeholder="Что делает этот код? Опиши своими словами: что на входе, что происходит, что на выходе. Термины знать необязательно — важно понимание."></textarea>
+      <div class="answer-bar">
+        <button class="primary" id="btn-send">Проверить</button>
+        <span class="hint-note" id="penalty-note"></span>
+      </div>
+    </div>
+
+    <div id="result" class="hidden"></div>
+  </div>
+
+  <div id="stats-panel" class="hidden"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let difficulty = "random";
+let round = null;
+let hintsUsed = 0;
+let answered = false;
+
+const HINT_TITLES = ["Синтаксис", "Контекст", "Наводка"];
+
+// Имя языка -> id грамматики highlight.js. Часть языков своей грамматики не имеет:
+// для них берём ближайшую родственную — подсветка приблизительная, но лучше монохрома.
+const HLJS_MAP = {
+  "C++": "cpp", "C#": "csharp", "F#": "fsharp", "Objective-C": "objectivec",
+  "x86-64 Assembly": "x86asm", "ARM Assembly": "armasm",
+  "Common Lisp": "lisp", "Emacs Lisp": "lisp", "Racket": "scheme",
+  "Standard ML": "sml", "Wolfram Language": "mathematica", "MATLAB": "matlab",
+  "T-SQL": "sql", "PL/SQL": "sql", "Tcl/Tk": "tcl", "Vimscript": "vim",
+  "Pascal": "delphi", "Modula-2": "delphi", "PureScript": "haskell",
+  "Idris": "haskell", "Agda": "haskell", "Unison": "haskell", "Roc": "elm",
+  "Gleam": "rust", "ReScript": "ocaml", "Starlark": "python", "Raku": "perl",
+  "Zsh": "bash", "sed": "bash", "Vala": "vala", "Chapel": "cpp",
+  "Move": "rust", "Cadence": "swift", "Ballerina": "typescript",
+  "Scratch (текстовая нотация)": "plaintext",
+};
+// Языки без сколько-нибудь близкой грамматики — не мучаем автодетект, оставляем как текст.
+const NO_HIGHLIGHT = new Set(["APL", "J", "K", "BQN", "Befunge", "PostScript", "Red", "Rebol"]);
+
+const CDN_LANGS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/";
+const triedLangs = new Set();
+
+// Базовый бандл highlight.js везёт ~36 языков; остальные лежат отдельными файлами.
+// Если CDN режется прокси, onerror может не прийти вовсе — поэтому ждём не дольше таймаута.
+function loadHljsLang(id) {
+  return new Promise(resolve => {
+    if (hljs.getLanguage(id)) return resolve(true);
+    if (triedLangs.has(id)) return resolve(false);
+    triedLangs.add(id);
+    const done = ok => { clearTimeout(timer); resolve(ok); };
+    const timer = setTimeout(() => done(false), 2500);
+    const s = document.createElement("script");
+    s.src = `${CDN_LANGS}${id}.min.js`;
+    s.onload = () => done(!!hljs.getLanguage(id));
+    s.onerror = () => done(false);
+    document.head.appendChild(s);
+  });
+}
+const DIFF_RU = { easy: "просто", medium: "средне", hard: "сложно" };
+
+function showError(msg) {
+  $("error").textContent = msg;
+  $("error").classList.remove("hidden");
+}
+function clearError() { $("error").classList.add("hidden"); }
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({ detail: "Сервер вернул не JSON" }));
+  if (!res.ok) throw new Error(data.detail || `Ошибка ${res.status}`);
+  return data;
+}
+
+async function highlight(code, language) {
+  const el = $("code");
+  el.textContent = code;
+  if (typeof hljs === "undefined" || NO_HIGHLIGHT.has(language)) return;
+  const id = HLJS_MAP[language] || language.toLowerCase().replace(/[^a-z0-9+#]/g, "");
+  try {
+    const exact = await loadHljsLang(id);
+    el.innerHTML = exact
+      ? hljs.highlight(code, { language: id }).value
+      : hljs.highlightAuto(code).value;
+  } catch (e) {
+    el.textContent = code; // подсветка — украшение, читаемость важнее
+  }
+}
+
+function renderHints() {
+  $("hints").innerHTML = "";
+  for (let i = 0; i < 3; i++) {
+    const div = document.createElement("div");
+    div.className = "hint";
+    div.dataset.i = i;
+    div.innerHTML = `
+      <div class="hint-top"><span>Подсказка ${i + 1}</span><span>−10%</span></div>
+      <div class="hint-title">${HINT_TITLES[i]}</div>
+      <div class="hint-body"></div>`;
+    div.onclick = () => openHint(i, div);
+    $("hints").appendChild(div);
+  }
+  updatePenaltyNote();
+}
+
+async function openHint(i, div) {
+  if (div.classList.contains("open") || answered) return;
+  div.querySelector(".hint-body").innerHTML = '<span class="spin"></span>';
+  div.classList.add("open");
+  try {
+    const data = await api(`/api/round/${round.id}/hint`, { index: i });
+    div.querySelector(".hint-body").textContent = data.text;
+    div.querySelector(".hint-top").innerHTML =
+      `<span>Подсказка ${i + 1}</span><span style="color:var(--bad)">−10% учтено</span>`;
+    hintsUsed = data.hints_used;
+    updatePenaltyNote();
+  } catch (e) {
+    div.classList.remove("open");
+    showError(e.message);
+  }
+}
+
+function updatePenaltyNote() {
+  const mult = round ? round.difficulty_mult : 1;
+  const factor = (1 - 0.1 * hintsUsed) * mult;
+  const parts = [`множитель сложности ×${mult}`];
+  if (hintsUsed) parts.push(`подсказок: ${hintsUsed} (−${hintsUsed * 10}%)`);
+  $("penalty-note").textContent =
+    `${parts.join(" · ")} → максимум ${Math.round(100 * factor)} очков`;
+}
+
+async function newRound() {
+  clearError();
+  $("stats-panel").classList.add("hidden");
+  $("btn-new").disabled = true;
+  $("btn-new").innerHTML = '<span class="spin"></span>Генерирую';
+  $("empty").classList.add("hidden");
+  try {
+    round = await api("/api/round", { difficulty });
+    hintsUsed = 0;
+    answered = false;
+    $("lang").textContent = round.language;
+    $("diff").textContent = DIFF_RU[round.difficulty];
+    $("diff").className = "badge " + round.difficulty;
+    const cb = $("cache-badge");
+    if (round.source === "cache") {
+      cb.textContent = "из банка (API недоступен)";
+      cb.classList.remove("hidden");
+    } else cb.classList.add("hidden");
+    highlight(round.code, round.language); // фоном: код уже виден, подсветка догоняет
+    renderHints();
+    $("answer").value = "";
+    $("answer-block").classList.remove("hidden");
+    $("result").classList.add("hidden");
+    $("round").classList.remove("hidden");
+    $("answer").focus();
+  } catch (e) {
+    showError(e.message);
+    $("empty").classList.remove("hidden");
+  } finally {
+    $("btn-new").disabled = false;
+    $("btn-new").textContent = "Новый код";
+  }
+}
+
+async function sendAnswer() {
+  const answer = $("answer").value.trim();
+  if (!answer) { $("answer").focus(); return; }
+  clearError();
+  $("btn-send").disabled = true;
+  $("btn-send").innerHTML = '<span class="spin"></span>Проверяю';
+  try {
+    const r = await api(`/api/round/${round.id}/answer`, { answer });
+    answered = true;
+    $("answer-block").classList.add("hidden");
+    renderResult(r);
+    applyStats(r.stats);
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    $("btn-send").disabled = false;
+    $("btn-send").textContent = "Проверить";
+  }
+}
+
+function colorFor(p) {
+  return p >= 70 ? "var(--good)" : p >= 41 ? "var(--mid)" : "var(--bad)";
+}
+
+function renderResult(r) {
+  const c = colorFor(r.percent);
+  const circ = 2 * Math.PI * 36;
+  const listHtml = (items, cls, title, empty) => `
+    <div>
+      <div class="list-title ${cls}">${title}</div>
+      ${items.length ? `<ul>${items.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`
+                     : `<div style="color:var(--muted);font-size:13.5px">${empty}</div>`}
+    </div>`;
+
+  $("result").innerHTML = `
+    <div class="card">
+      <div class="score-head">
+        <div class="ring">
+          <svg width="84" height="84">
+            <circle cx="42" cy="42" r="36" fill="none" stroke="var(--panel-2)" stroke-width="7"/>
+            <circle cx="42" cy="42" r="36" fill="none" stroke="${c}" stroke-width="7"
+              stroke-linecap="round" stroke-dasharray="${circ}"
+              stroke-dashoffset="${circ * (1 - r.percent / 100)}"/>
+          </svg>
+          <div class="ring-num" style="color:${c}">${r.percent}%</div>
+        </div>
+        <div>
+          <div class="verdict">${escapeHtml(r.verdict)}</div>
+          <div class="points-line">
+            <b>+${r.points}</b> очков &nbsp;·&nbsp; ${r.percent}%
+            ${r.hints_used ? ` × ${(1 - 0.1 * r.hints_used).toFixed(1)} (подсказки)` : ""}
+            × ${r.difficulty_mult} (сложность)
+            ${r.streak > 1 ? ` &nbsp;·&nbsp; серия ${r.streak} 🔥` : ""}
+          </div>
+        </div>
+      </div>
+      <div class="lists">
+        ${listHtml(r.correct, "ok-title", "Понял верно", "Ничего из сути не поймано")}
+        ${listHtml(r.missed, "miss-title", "Упустил", "Ничего не упущено")}
+      </div>
+      <div class="reference">
+        <div class="list-title">Эталонный разбор</div>
+        ${escapeHtml(r.reference)}
+      </div>
+      ${r.key_insight ? `<div class="insight"><b>Ради чего этот фрагмент:</b> ${escapeHtml(r.key_insight)}</div>` : ""}
+    </div>
+    <div style="text-align:center">
+      <button class="primary" onclick="newRound()">Следующий фрагмент →</button>
+    </div>`;
+  $("result").classList.remove("hidden");
+  $("result").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function escapeHtml(s) {
+  const d = document.createElement("div");
+  d.textContent = s == null ? "" : String(s);
+  return d.innerHTML;
+}
+
+function applyStats(s) {
+  $("rank").textContent = s.rank;
+  $("next-rank").textContent = s.next_rank
+    ? `${s.total_points} / ${s.next_rank_at} → ${s.next_rank}`
+    : "максимальный ранг";
+  $("rank-bar").style.width = (s.rank_progress * 100) + "%";
+  $("m-points").textContent = s.total_points;
+  $("m-avg").textContent = s.avg_percent_last10 + "%";
+  $("m-streak").textContent = s.current_streak;
+  $("m-langs").textContent = s.languages_seen;
+}
+
+async function showStats() {
+  const p = $("stats-panel");
+  if (!p.classList.contains("hidden")) { p.classList.add("hidden"); return; }
+  const s = await api("/api/stats");
+  applyStats(s);
+  p.innerHTML = `
+    <div class="card">
+      <div class="card-head"><b>Статистика</b></div>
+      <div class="lists">
+        <div>
+          <div class="list-title">По языкам (${s.languages_seen})</div>
+          ${s.by_language.length ? `<table class="langs">${s.by_language.map(l =>
+            `<tr><td>${escapeHtml(l.language)}</td><td>${l.rounds} × ${l.avg_percent}%</td></tr>`
+          ).join("")}</table>` : '<div style="color:var(--muted)">Пока пусто</div>'}
+        </div>
+        <div>
+          <div class="list-title">Последние раунды</div>
+          ${s.recent.length ? `<table class="langs">${s.recent.map(r =>
+            `<tr><td>${escapeHtml(r.language)} <span style="color:var(--muted)">${DIFF_RU[r.difficulty]}</span></td>
+             <td style="color:${colorFor(r.percent)}">${r.percent}% · +${r.points}</td></tr>`
+          ).join("")}</table>` : '<div style="color:var(--muted)">Пока пусто</div>'}
+        </div>
+      </div>
+      <div class="reference" style="color:var(--muted);font-size:13px">
+        Раундов: ${s.rounds_played} · средний процент за всё время: ${s.avg_percent_all}% ·
+        лучшая серия: ${s.best_streak}
+      </div>
+    </div>`;
+  p.classList.remove("hidden");
+}
+
+$("diff-seg").onclick = e => {
+  if (e.target.tagName !== "BUTTON") return;
+  [...$("diff-seg").children].forEach(b => b.classList.remove("on"));
+  e.target.classList.add("on");
+  difficulty = e.target.dataset.d;
+};
+$("btn-new").onclick = newRound;
+$("btn-send").onclick = sendAnswer;
+$("btn-stats").onclick = () => showStats().catch(e => showError(e.message));
+$("answer").addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") sendAnswer();
+});
+
+api("/api/stats").then(applyStats).catch(() => {});
+</script>
+</body>
+</html>
