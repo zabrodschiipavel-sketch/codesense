@@ -115,6 +115,36 @@
   .insight { padding: 14px 18px; border-top: 1px solid var(--border); background: #0e1a26; font-size: 13.5px; }
   .insight b { color: var(--accent); }
 
+  .pill { background: var(--accent); color: #06121f; border-radius: 10px; padding: 0 6px; font-size: 11px; margin-left: 5px; }
+  .sel {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; font-family: inherit; font-size: 13px;
+  }
+  .sel:focus { outline: none; border-color: var(--accent); }
+
+  /* Карточка: лицо крупно и по центру — его надо узнавать с одного взгляда, как слово. */
+  #card-front { padding: 40px 24px; text-align: center; }
+  #card-front.construct { font-family: var(--mono); font-size: 30px; color: var(--accent); word-break: break-word; }
+  #card-front.snippet { padding: 18px; text-align: left; }
+  #card-front.snippet pre { padding: 0; }
+  #card-back { padding: 20px 24px; border-top: 1px solid var(--border); font-size: 15px; line-height: 1.6; }
+
+  .rate-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+  .rate {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 6px; cursor: pointer; font-family: inherit; color: var(--text);
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .rate:hover { border-color: currentColor; }
+  .rate b { font-size: 14px; }
+  .rate span { font-size: 11px; color: var(--muted); }
+  .rate kbd {
+    font-size: 10px; color: var(--muted); border: 1px solid var(--border);
+    border-radius: 3px; padding: 0 4px; margin-top: 2px;
+  }
+  .rate.again { color: var(--bad); } .rate.hard { color: var(--mid); }
+  .rate.good { color: var(--good); } .rate.easy { color: var(--accent); }
+
   .muted-center { text-align: center; color: var(--muted); padding: 60px 20px; }
   .err { border-color: #5c2b2b; background: #2b1616; padding: 14px 16px; border-radius: 10px; border: 1px solid #5c2b2b; color: #ffb4b0; font-size: 14px; margin-bottom: 16px; }
   .hidden { display: none; }
@@ -144,9 +174,22 @@
       <div class="metric"><b id="m-avg">0%</b><span>средн. 10</span></div>
       <div class="metric"><b id="m-streak">0</b><span>серия</span></div>
       <div class="metric"><b id="m-langs">0</b><span>языков</span></div>
+      <div class="metric"><b id="m-cards">0</b><span>к повтору</span></div>
     </div>
   </header>
 
+  <div class="controls">
+    <div class="seg" id="mode-seg">
+      <button data-m="train" class="on">Тренировка</button>
+      <button data-m="cards">Карточки <b id="due-pill" class="pill hidden">0</b></button>
+    </div>
+    <div class="spacer"></div>
+    <button class="ghost" id="btn-stats">Статистика</button>
+  </div>
+
+  <div id="error" class="err hidden"></div>
+
+  <div id="train-view">
   <div class="controls">
     <div class="seg" id="diff-seg">
       <button data-d="random" class="on">Случайно</button>
@@ -155,11 +198,8 @@
       <button data-d="hard">Сложно</button>
     </div>
     <div class="spacer"></div>
-    <button class="ghost" id="btn-stats">Статистика</button>
     <button class="primary" id="btn-new">Новый код</button>
   </div>
-
-  <div id="error" class="err hidden"></div>
 
   <div id="empty" class="muted-center">
     Жми <b>«Новый код»</b> — получишь фрагмент на случайном языке.<br>
@@ -187,6 +227,36 @@
     </div>
 
     <div id="result" class="hidden"></div>
+  </div>
+  </div><!-- /train-view -->
+
+  <div id="cards-view" class="hidden">
+    <div class="controls">
+      <select id="deck-lang" class="sel"></select>
+      <select id="deck-count" class="sel">
+        <option value="10">10 карточек</option>
+        <option value="20" selected>20 карточек</option>
+        <option value="30">30 карточек</option>
+      </select>
+      <button class="ghost" id="btn-deck">Собрать колоду</button>
+      <div class="spacer"></div>
+      <span class="hint-note" id="card-progress"></span>
+    </div>
+
+    <div id="card-empty" class="muted-center"></div>
+
+    <div id="card-area" class="hidden">
+      <div class="card">
+        <div class="card-head">
+          <span class="badge lang" id="card-lang">—</span>
+          <span class="badge" id="card-kind">—</span>
+          <span class="badge hidden" id="card-new">новая</span>
+        </div>
+        <div id="card-front"></div>
+        <div id="card-back" class="hidden"></div>
+      </div>
+      <div id="card-actions"></div>
+    </div>
   </div>
 
   <div id="stats-panel" class="hidden"></div>
@@ -257,8 +327,9 @@ async function api(path, body) {
   return data;
 }
 
-async function highlight(code, language) {
-  const el = $("code");
+const highlight = (code, language) => highlightInto($("code"), code, language);
+
+async function highlightInto(el, code, language) {
   el.textContent = code;
   if (typeof hljs === "undefined" || NO_HIGHLIGHT.has(language)) return;
   const id = HLJS_MAP[language] || language.toLowerCase().replace(/[^a-z0-9+#]/g, "");
@@ -413,6 +484,9 @@ function renderResult(r) {
         ${escapeHtml(r.reference)}
       </div>
       ${r.key_insight ? `<div class="insight"><b>Ради чего этот фрагмент:</b> ${escapeHtml(r.key_insight)}</div>` : ""}
+      ${r.cards_added ? `<div class="insight">
+        <b>Заведено карточек: ${r.cards_added}</b> — из того, что ты упустил. Ждут в разделе «Карточки».
+      </div>` : ""}
     </div>
     <div style="text-align:center">
       <button class="primary" onclick="newRound()">Следующий фрагмент →</button>
@@ -437,6 +511,7 @@ function applyStats(s) {
   $("m-avg").textContent = s.avg_percent_last10 + "%";
   $("m-streak").textContent = s.current_streak;
   $("m-langs").textContent = s.languages_seen;
+  if (s.cards) applyCardStats(s.cards);
 }
 
 async function showStats() {
@@ -466,9 +541,187 @@ async function showStats() {
         Раундов: ${s.rounds_played} · средний процент за всё время: ${s.avg_percent_all}% ·
         лучшая серия: ${s.best_streak}
       </div>
+      <div class="insight" style="font-size:13px">
+        Карточек: <b>${s.cards.total}</b> по ${s.cards.languages}
+        ${plural(s.cards.languages, "языку", "языкам", "языкам")} ·
+        к повторению сейчас: <b>${s.cards.due}</b> ·
+        новых: ${s.cards.new} · выучено: ${s.cards.learned}
+      </div>
     </div>`;
   p.classList.remove("hidden");
 }
+
+// ---------- Карточки ----------
+let mode = "train";
+let queue = [];
+let card = null;
+let flipped = false;
+let sessionTotal = 0, sessionDone = 0;
+
+const RATE_BTNS = [
+  { r: "again", label: "Забыл", key: "1" },
+  { r: "hard", label: "Трудно", key: "2" },
+  { r: "good", label: "Хорошо", key: "3" },
+  { r: "easy", label: "Легко", key: "4" },
+];
+
+function setMode(m) {
+  mode = m;
+  $("train-view").classList.toggle("hidden", m !== "train");
+  $("cards-view").classList.toggle("hidden", m !== "cards");
+  $("stats-panel").classList.add("hidden");
+  clearError();
+  if (m === "cards") loadCards();
+}
+
+async function loadCards() {
+  try {
+    const d = await api("/api/cards/due");
+    queue = d.cards;
+    sessionTotal = queue.length;
+    sessionDone = 0;
+    applyCardStats(d.stats);
+    nextCard();
+  } catch (e) { showError(e.message); }
+}
+
+function nextCard() {
+  card = queue.shift() || null;
+  flipped = false;
+  if (!card) {
+    $("card-area").classList.add("hidden");
+    $("card-empty").classList.remove("hidden");
+    $("card-empty").innerHTML = sessionTotal
+      ? `Всё повторено — <b>${sessionDone}</b> ${plural(sessionDone, "карточка", "карточки", "карточек")} за сессию.<br>
+         Возвращайся, когда подойдёт срок следующих.`
+      : `Пока нечего повторять.<br>
+         Карточки заводятся сами после каждого раунда — из того, что ты упустил.<br>
+         Или собери колоду по языку кнопкой выше.`;
+    $("card-progress").textContent = "";
+    return;
+  }
+  $("card-empty").classList.add("hidden");
+  $("card-area").classList.remove("hidden");
+  renderCard();
+}
+
+function renderCard() {
+  $("card-lang").textContent = card.language;
+  $("card-kind").textContent = card.kind === "snippet" ? "фрагмент" : "конструкция";
+  $("card-new").classList.toggle("hidden", card.reps !== 0);
+
+  const front = $("card-front");
+  front.className = card.kind;
+  if (card.kind === "snippet") {
+    front.innerHTML = "<pre><code></code></pre>";
+    const code = front.querySelector("code");
+    code.textContent = card.front;
+    highlightInto(code, card.front, card.language);
+  } else {
+    front.textContent = card.front;
+  }
+
+  $("card-back").classList.add("hidden");
+  $("card-back").textContent = card.back;
+  $("card-actions").innerHTML =
+    `<button class="primary" id="btn-flip" style="width:100%;padding:12px">Показать ответ <kbd style="opacity:.6">пробел</kbd></button>`;
+  $("btn-flip").onclick = flip;
+  $("card-progress").textContent =
+    `${sessionDone} из ${sessionTotal} · осталось ${queue.length + 1}`;
+}
+
+function flip() {
+  if (flipped) return;
+  flipped = true;
+  $("card-back").classList.remove("hidden");
+  $("card-actions").innerHTML =
+    `<div class="rate-row">${RATE_BTNS.map(b => `
+      <button class="rate ${b.r}" data-r="${b.r}">
+        <b>${b.label}</b><span>${card.intervals[b.r]}</span><kbd>${b.key}</kbd>
+      </button>`).join("")}</div>`;
+  $("card-actions").querySelectorAll(".rate").forEach(el => {
+    el.onclick = () => rate(el.dataset.r);
+  });
+}
+
+async function rate(rating) {
+  if (!card || !flipped) return;
+  const current = card;
+  card = null; // защита от двойного нажатия, пока летит запрос
+  try {
+    const r = await api(`/api/cards/${current.id}/review`, { rating });
+    if (r.again) {
+      queue.push(current); // забыл — вернётся в конце этой же сессии
+    } else {
+      sessionDone++;
+    }
+    applyCardStats(r.stats);
+    nextCard();
+  } catch (e) {
+    card = current;
+    showError(e.message);
+  }
+}
+
+function applyCardStats(s) {
+  const pill = $("due-pill");
+  pill.textContent = s.due;
+  pill.classList.toggle("hidden", !s.due);
+  $("m-cards").textContent = s.due;
+}
+
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+}
+
+async function makeDeck() {
+  const language = $("deck-lang").value;
+  const count = Number($("deck-count").value);
+  clearError();
+  $("btn-deck").disabled = true;
+  $("btn-deck").innerHTML = '<span class="spin"></span>Собираю';
+  try {
+    const r = await api("/api/cards/deck", { language, count });
+    applyCardStats(r.stats);
+    await loadCards();
+    if (!r.added) showError(`Все карточки по ${language} уже были — новых не добавилось.`);
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    $("btn-deck").disabled = false;
+    $("btn-deck").textContent = "Собрать колоду";
+  }
+}
+
+async function fillLanguages() {
+  try {
+    const d = await api("/api/languages");
+    $("deck-lang").innerHTML = d.languages
+      .map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join("");
+  } catch (e) { /* колода просто не соберётся, тренировке не мешает */ }
+}
+
+$("mode-seg").onclick = e => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  [...$("mode-seg").children].forEach(b => b.classList.remove("on"));
+  btn.classList.add("on");
+  setMode(btn.dataset.m);
+};
+$("btn-deck").onclick = makeDeck;
+
+document.addEventListener("keydown", e => {
+  if (mode !== "cards" || !card) return;
+  if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") return;
+  if ((e.code === "Space" || e.key === " ") && !flipped) { e.preventDefault(); flip(); return; }
+  if (flipped) {
+    const b = RATE_BTNS.find(x => x.key === e.key);
+    if (b) { e.preventDefault(); rate(b.r); }
+  }
+});
 
 $("diff-seg").onclick = e => {
   if (e.target.tagName !== "BUTTON") return;
@@ -484,6 +737,7 @@ $("answer").addEventListener("keydown", e => {
 });
 
 api("/api/stats").then(applyStats).catch(() => {});
+fillLanguages();
 </script>
 </body>
 </html>

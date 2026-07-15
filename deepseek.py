@@ -155,6 +155,78 @@ async def generate_snippet(language: str, difficulty: str, brief: str, theme: st
     }
 
 
+DECK_SYSTEM = (
+    "Ты — составитель карточек для интервального повторения. Ты отлично знаешь десятки языков "
+    "программирования, включая редкие, и умеешь выделить в языке то, что чаще всего ставит в "
+    "тупик читателя со стороны. Отвечаешь только валидным JSON-объектом."
+)
+
+
+def _deck_prompt(language: str, count: int, have: list[str]) -> str:
+    have_line = ""
+    if have:
+        have_line = (
+            "\nЭти карточки уже есть, не повторяй их: " + ", ".join(have[:60]) + "."
+        )
+    return f"""Собери колоду карточек по языку {language} — {count} штук.
+
+Карточки для человека, который язык не учит, а учится читать чужой код на нём. Значит бери
+то, обо что спотыкается именно читатель: непривычный синтаксис, операторы-символы, идиомы,
+которые выглядят загадочно, если видишь язык впервые.{have_line}
+
+Требования:
+- Лицевая сторона самодостаточна и написана так, как встречается в реальном коде.
+- kind = "construct" — голая конструкция: оператор, символ, форма объявления, имя функции.
+  kind = "snippet" — если без контекста непонятно: тогда front это 2-3 строки кода на {language}.
+- Оборот — 1-2 предложения по существу.
+- Никакого общего программистского знания («что такое цикл»). Только специфика {language}.
+- Не дублируй карточки между собой.
+- Расположи от самого частого и базового к более редкому.
+
+Верни JSON ровно такой формы:
+{{
+  "cards": [
+    {{"kind": "construct", "front": "как пишется в коде", "back": "что это и что делает"}}
+  ]
+}}
+
+Обороты — на русском. Лицевые стороны — код/синтаксис {language} как есть."""
+
+
+async def generate_deck(language: str, count: int, have: list[str]) -> list[dict]:
+    data = await _chat(
+        DECK_SYSTEM,
+        _deck_prompt(language, count, have),
+        temperature=0.8,
+        reasoning=REASONING_GENERATE,
+    )
+    cards = _clean_cards_deck(data.get("cards"))
+    if not cards:
+        raise DeepSeekError("Модель не вернула ни одной пригодной карточки")
+    return cards
+
+
+def _clean_cards_deck(raw) -> list[dict]:
+    if not isinstance(raw, list):
+        return []
+    out, seen = [], set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        front = str(item.get("front") or "").strip()
+        back = str(item.get("back") or "").strip()
+        if not front or not back or front.lower() in seen:
+            continue
+        seen.add(front.lower())
+        kind = item.get("kind")
+        out.append({
+            "front": front,
+            "back": back,
+            "kind": kind if kind in ("construct", "snippet") else "construct",
+        })
+    return out
+
+
 GRADE_SYSTEM = (
     "Ты — строгий, но честный экзаменатор по чтению кода. Ты оцениваешь ровно одно: "
     "насколько человек понял, что делает код. Отвечаешь только валидным JSON-объектом."
@@ -193,16 +265,32 @@ def _grade_prompt(language: str, code: str, reference: str, answer: str) -> str:
 41-60 — понял в общих чертах, механика мимо; 61-80 — верно понял, что делает, детали неточны;
 81-95 — понял и что, и как, мелкие огрехи; 96-100 — исчерпывающе.
 
+Отдельно собери 1-3 карточки для интервального повторения по конструкциям ИМЕННО этого
+фрагмента. В первую очередь — по тому, что человек упустил; если он понял всё, бери самое
+примечательное в языке из увиденного.
+
+Требования к карточкам:
+- Лицевая сторона самодостаточна: человек увидит её через месяц без этого фрагмента рядом.
+  Не пиши «что делает функция выше» и не ссылайся на исходный код.
+- kind = "construct" — если хватает голой конструкции: оператор, символ, имя функции ({language}).
+  kind = "snippet" — если без контекста непонятно: тогда front это 2-3 строки кода.
+- Оборот — 1-2 предложения по существу, без воды.
+- Не делай карточку из общего программистского знания («что такое рекурсия»). Только то, что
+  специфично для {language} и его синтаксиса.
+
 Верни JSON ровно такой формы:
 {{
   "percent": <целое число 0-100>,
   "verdict": "одна фраза-приговор на русском, по делу, без похвалы ради похвалы",
   "correct": ["что человек уловил верно — короткие пункты, максимум 4; пустой список, если ничего"],
   "missed": ["что упустил или понял неверно — короткие пункты, максимум 4; пустой список, если всё верно"],
-  "key_insight": "одно предложение: та деталь языка или логики, ради которой стоило смотреть на этот фрагмент"
+  "key_insight": "одно предложение: та деталь языка или логики, ради которой стоило смотреть на этот фрагмент",
+  "cards": [
+    {{"kind": "construct", "front": "конструкция как она пишется в коде", "back": "что это и что делает"}}
+  ]
 }}
 
-Всё — на русском языке."""
+Русский язык везде, кроме поля front — там код как есть."""
 
 
 async def grade_answer(language: str, code: str, reference: str, answer: str) -> dict:
@@ -223,4 +311,26 @@ async def grade_answer(language: str, code: str, reference: str, answer: str) ->
         "correct": [str(x) for x in (data.get("correct") or [])][:4],
         "missed": [str(x) for x in (data.get("missed") or [])][:4],
         "key_insight": (data.get("key_insight") or "").strip(),
+        "cards": _clean_cards(data.get("cards")),
     }
+
+
+def _clean_cards(raw) -> list[dict]:
+    """Карточки — побочный продукт оценки: кривые молча выбрасываем, оценку из-за них не роняем."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw[:3]:
+        if not isinstance(item, dict):
+            continue
+        front = str(item.get("front") or "").strip()
+        back = str(item.get("back") or "").strip()
+        if not front or not back:
+            continue
+        kind = item.get("kind")
+        out.append({
+            "front": front,
+            "back": back,
+            "kind": kind if kind in ("construct", "snippet") else "construct",
+        })
+    return out

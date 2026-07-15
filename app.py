@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 import deepseek
 import languages
+import srs
 import storage
 
 STATIC_DIR = pathlib.Path(__file__).parent / "static"
@@ -34,6 +35,38 @@ class HintRequest(BaseModel):
 
 class AnswerRequest(BaseModel):
     answer: str
+
+
+class ReviewRequest(BaseModel):
+    rating: str
+
+
+class DeckRequest(BaseModel):
+    language: str
+    count: int = Field(default=20, ge=5, le=40)
+
+
+def _full_stats() -> dict:
+    """Всё, что рисует шапка. Раунд заводит карточки, поэтому их счётчик обязан
+    ехать в том же ответе — иначе плашка «Карточки» оживёт только после перезагрузки."""
+    return {**storage.stats(), "cards": storage.card_stats()}
+
+
+def _build_cards(raw: list[dict], language: str, source: str, snippet_id: str | None) -> list[dict]:
+    return [
+        {
+            "id": uuid.uuid4().hex[:12],
+            "language": language,
+            "front": c["front"],
+            "back": c["back"],
+            "kind": c["kind"],
+            "source": source,
+            "source_snippet_id": snippet_id,
+            "created_at": storage.now_iso(),
+            **srs.new_state(),
+        }
+        for c in raw
+    ]
 
 
 @app.get("/")
@@ -138,6 +171,10 @@ async def submit_answer(snippet_id: str, req: AnswerRequest):
     )
     ACTIVE.pop(snippet_id, None)
 
+    cards_added = storage.save_cards(
+        _build_cards(grade["cards"], snippet["language"], source="round", snippet_id=snippet_id)
+    )
+
     return {
         **grade,
         "reference": snippet["reference"],
@@ -146,13 +183,75 @@ async def submit_answer(snippet_id: str, req: AnswerRequest):
         "difficulty_mult": mult,
         "passed": grade["percent"] >= PASS_PERCENT,
         "streak": progress["rounds"][-1]["streak_after"],
-        "stats": storage.stats(),
+        "cards_added": cards_added,
+        "stats": _full_stats(),
     }
+
+
+@app.get("/api/cards/due")
+async def cards_due():
+    """Вся очередь на сегодня разом: карточки лёгкие, а листать их надо без задержек."""
+    cards = [c for c in storage.load_cards().values() if srs.is_due(c)]
+    # Сначала те, что уже учатся: новые не должны вытеснять просроченные повторы.
+    cards.sort(key=lambda c: (c["reps"] == 0, c["due"]))
+    return {
+        "cards": [
+            {
+                "id": c["id"],
+                "language": c["language"],
+                "kind": c["kind"],
+                "front": c["front"],
+                "back": c["back"],
+                "reps": c["reps"],
+                "intervals": srs.preview_intervals(c),
+            }
+            for c in cards
+        ],
+        "stats": storage.card_stats(),
+    }
+
+
+@app.post("/api/cards/{card_id}/review")
+async def review_card(card_id: str, req: ReviewRequest):
+    card = storage.get_card(card_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="Карточка не найдена")
+    try:
+        state = srs.apply_review(card, req.rating)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    updated = storage.update_card(card_id, state)
+    return {
+        "id": card_id,
+        "interval": updated["interval"],
+        "due": updated["due"],
+        "ease": updated["ease"],
+        "again": req.rating == "again",  # карточка вернётся в конец очереди этой сессии
+        "stats": storage.card_stats(),
+    }
+
+
+@app.post("/api/cards/deck")
+async def make_deck(req: DeckRequest):
+    if req.language not in languages.all_languages():
+        raise HTTPException(status_code=400, detail=f"Неизвестный язык: {req.language}")
+    have = [c["front"] for c in storage.load_cards().values() if c["language"] == req.language]
+    try:
+        raw = await deepseek.generate_deck(req.language, req.count, have)
+    except deepseek.DeepSeekError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    added = storage.save_cards(_build_cards(raw, req.language, source="deck", snippet_id=None))
+    return {"language": req.language, "added": added, "stats": storage.card_stats()}
+
+
+@app.get("/api/languages")
+async def get_languages():
+    return {"languages": languages.all_languages()}
 
 
 @app.get("/api/stats")
 async def get_stats():
-    return storage.stats()
+    return _full_stats()
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

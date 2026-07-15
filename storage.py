@@ -5,9 +5,12 @@ import pathlib
 import threading
 from datetime import datetime, timezone
 
+import srs
+
 DATA_DIR = pathlib.Path(__file__).parent / "data"
 SNIPPETS_FILE = DATA_DIR / "snippets.json"
 PROGRESS_FILE = DATA_DIR / "progress.json"
+CARDS_FILE = DATA_DIR / "cards.json"
 
 _lock = threading.Lock()
 
@@ -114,6 +117,62 @@ def record_round(round_data: dict) -> dict:
         progress["best_streak"] = max(progress.get("best_streak", 0), streak)
         _write(PROGRESS_FILE, progress)
         return progress
+
+
+def load_cards() -> dict:
+    return _read(CARDS_FILE, {})
+
+
+def get_card(card_id: str) -> dict | None:
+    return load_cards().get(card_id)
+
+
+def save_cards(new_cards: list[dict]) -> int:
+    """Дописывает карточки, пропуская дубли по (язык, лицевая сторона). Возвращает число добавленных."""
+    if not new_cards:
+        return 0
+    with _lock:
+        cards = load_cards()
+        seen = {(c["language"], c["front"].strip().lower()) for c in cards.values()}
+        added = 0
+        for card in new_cards:
+            key = (card["language"], card["front"].strip().lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            cards[card["id"]] = card
+            added += 1
+        if added:
+            _write(CARDS_FILE, cards)
+        return added
+
+
+def update_card(card_id: str, state: dict) -> dict:
+    with _lock:
+        cards = load_cards()
+        card = cards[card_id]
+        card.update(state)
+        _write(CARDS_FILE, cards)
+        return card
+
+
+def card_stats() -> dict:
+    cards = list(load_cards().values())
+    due = [c for c in cards if srs.is_due(c)]
+    by_language: dict[str, int] = {}
+    for c in cards:
+        by_language[c["language"]] = by_language.get(c["language"], 0) + 1
+    return {
+        "total": len(cards),
+        "due": len(due),
+        "new": len([c for c in cards if c["reps"] == 0]),
+        "learned": len([c for c in cards if c["reps"] >= 2]),
+        "languages": len(by_language),
+        "by_language": sorted(
+            ({"language": k, "cards": v} for k, v in by_language.items()),
+            key=lambda x: (-x["cards"], x["language"]),
+        ),
+    }
 
 
 def rank_for(points: int) -> tuple[str, int | None, str | None]:
